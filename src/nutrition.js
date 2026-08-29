@@ -8,7 +8,7 @@ export function calcNutrient(amountG, per100) {
 
 export function calcIngredientMacros(ingredient = {}) {
   const grams = Number(ingredient.grams) || 0;
-  const per100 = ingredient.per100 || {};
+  const per100 = ingredient.per100 || ingredient.per100g || {};
   return {
     kcal: calcNutrient(grams, per100.kcal),
     protein: calcNutrient(grams, per100.protein),
