@@ -2,6 +2,7 @@ import { loadNutritionState } from './nutrition-screen.js';
 import { RECIPES } from './recipes.js';
 import { calcRecipeMacros, roundMacros } from './nutrition.js';
 import { TRAINING_PLAN, getSessionById } from './training.js';
+import { getLastExerciseEntry, progressionSuggestion, recordExercise } from './training-log.js';
 
 const app = document.querySelector('#app');
 let route = 'nutrition';
@@ -9,11 +10,10 @@ let selectedRecipe = null;
 let selectedSession = null;
 
 const fmt = (value) => Number(value || 0).toLocaleString('es-ES', { maximumFractionDigits: 1 });
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' }[char]));
 
 function nav() {
-  return `<nav class="nav">
-    ${['inicio','entreno','nutrition','progreso'].map((item) => `<button data-route="${item}" class="${route===item?'active':''}">${item==='nutrition'?'Nutrición':item[0].toUpperCase()+item.slice(1)}</button>`).join('')}
-  </nav>`;
+  return `<nav class="nav">${['inicio','entreno','nutrition','progreso'].map((item) => `<button data-route="${item}" class="${route===item?'active':''}">${item==='nutrition'?'Nutrición':item[0].toUpperCase()+item.slice(1)}</button>`).join('')}</nav>`;
 }
 
 function bindNav() {
@@ -52,12 +52,39 @@ function recipeDetail(recipe) {
 
 function training() {
   const sessions = TRAINING_PLAN.map((session) => `<button class="meal" data-session="${session.id}"><div class="row"><div><strong>${session.day} · ${session.title}</strong><div class="muted">${session.focus}</div></div><span class="chip">≈ ${session.estimatedMinutes} min</span></div><div class="muted">${session.exercises.length} ejercicios · RIR objetivo 1–2</div></button>`).join('');
-  return `<section class="card hero"><div><h1>Entrenamiento</h1><div class="muted">Plan de 4 días con cobertura completa, frecuencia 2× para los grandes grupos y sesiones de menos de 50 minutos.</div></div><span class="chip">4 días</span></section><section class="card"><h2>Semana</h2>${sessions}</section><section class="card"><h2>Reglas de progresión</h2><div class="muted">Mantén 1–2 repeticiones en reserva en la mayoría de series. Cuando completes el extremo alto del rango de repeticiones con la técnica prevista, aumenta ligeramente la carga en la siguiente sesión.</div></section>`;
+  return `<section class="card hero"><div><h1>Entrenamiento</h1><div class="muted">Plan de 4 días con cobertura completa, frecuencia 2× para los grandes grupos y sesiones de menos de 50 minutos.</div></div><span class="chip">4 días</span></section><section class="card"><h2>Semana</h2>${sessions}</section><section class="card"><h2>Progresión</h2><div class="muted">Evolutio compara cada ejercicio con tu última sesión y te propone mantener carga, sumar repeticiones o subir peso.</div></section>`;
+}
+
+function exerciseLogger(session, exercise, index) {
+  const last = getLastExerciseEntry(session.id, exercise.name);
+  const suggestion = progressionSuggestion({ lastEntry: last, repRange: exercise.reps });
+  const lastBest = last?.sets?.filter((s) => s.completed).sort((a,b) => (b.weight*b.reps)-(a.weight*a.reps))[0];
+  const rows = Array.from({ length: exercise.sets }, (_, setIndex) => `<div class="set-row"><span class="set-label">S${setIndex + 1}</span><input inputmode="decimal" type="number" min="0" step="0.5" placeholder="kg" data-weight><input inputmode="numeric" type="number" min="0" step="1" placeholder="reps" data-reps><input inputmode="numeric" type="number" min="0" max="5" step="1" value="2" aria-label="RIR" data-rir><label class="done"><input type="checkbox" data-completed checked>✓</label></div>`).join('');
+  return `<article class="exercise logger" data-exercise-card="${index}"><div class="exercise-index">${index + 1}</div><div class="exercise-body"><strong>${escapeHtml(exercise.name)}</strong><div class="muted">${exercise.sets} series · ${exercise.reps} reps · RIR ${exercise.rir}</div><div class="last-session">${lastBest ? `Última: <strong>${fmt(lastBest.weight)} kg × ${fmt(lastBest.reps)}</strong> · RIR ${fmt(lastBest.rir)}` : 'Sin registros anteriores'}</div><div class="progression">${escapeHtml(suggestion.message)}</div><div class="set-head"><span>Serie</span><span>kg</span><span>reps</span><span>RIR</span><span></span></div>${rows}<button class="save-exercise" data-save-exercise="${index}">Guardar ejercicio</button><div class="save-status" aria-live="polite"></div></div></article>`;
 }
 
 function sessionDetail(session) {
-  const exercises = session.exercises.map((exercise, index) => `<div class="exercise"><div class="exercise-index">${index + 1}</div><div class="exercise-body"><strong>${exercise.name}</strong><div class="muted">${exercise.sets} series · ${exercise.reps} reps · RIR ${exercise.rir}</div><div class="tags">${exercise.muscles.map((m) => `<span class="chip">${m}</span>`).join('')}</div></div></div>`).join('');
-  return `<button class="back" id="backTraining">← Entrenamiento</button><section class="card" style="margin-top:14px"><div class="row"><div><span class="chip">${session.day}</span><h1 style="margin:12px 0 6px">${session.title}</h1><div class="muted">${session.focus}</div></div><span class="chip">≈ ${session.estimatedMinutes} min</span></div></section><section class="card"><h2>Ejercicios</h2>${exercises}</section>`;
+  const exercises = session.exercises.map((exercise, index) => exerciseLogger(session, exercise, index)).join('');
+  return `<button class="back" id="backTraining">← Entrenamiento</button><section class="card" style="margin-top:14px"><div class="row"><div><span class="chip">${session.day}</span><h1 style="margin:12px 0 6px">${session.title}</h1><div class="muted">${session.focus}</div></div><span class="chip">≈ ${session.estimatedMinutes} min</span></div></section><section class="card"><h2>Registrar sesión</h2><div class="muted">Introduce peso, repeticiones y RIR. La próxima vez verás tu último rendimiento y una propuesta de progresión.</div>${exercises}</section>`;
+}
+
+function bindExerciseLogging(session) {
+  document.querySelectorAll('[data-save-exercise]').forEach((button) => button.addEventListener('click', () => {
+    const index = Number(button.dataset.saveExercise);
+    const exercise = session.exercises[index];
+    const card = document.querySelector(`[data-exercise-card="${index}"]`);
+    if (!exercise || !card) return;
+    const setRows = [...card.querySelectorAll('.set-row')];
+    const sets = setRows.map((row) => ({
+      weight: row.querySelector('[data-weight]')?.value,
+      reps: row.querySelector('[data-reps]')?.value,
+      rir: row.querySelector('[data-rir]')?.value,
+      completed: row.querySelector('[data-completed]')?.checked,
+    }));
+    recordExercise({ sessionId: session.id, exerciseName: exercise.name, sets });
+    const status = card.querySelector('.save-status');
+    if (status) status.textContent = 'Guardado. La última sesión ya se usará para la próxima progresión.';
+  }));
 }
 
 function home() {
@@ -77,6 +104,7 @@ function render() {
   if (selectedSession) {
     shell(sessionDetail(selectedSession));
     document.querySelector('#backTraining')?.addEventListener('click', () => { selectedSession = null; route = 'entreno'; render(); });
+    bindExerciseLogging(selectedSession);
     return;
   }
   if (route === 'nutrition') shell(nutrition());
