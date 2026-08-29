@@ -1,4 +1,4 @@
-import { calculateIngredientMacros, sumMacros } from './nutrition.js';
+import { calcIngredientMacros, calcRecipeMacros } from './nutrition.js';
 import { safeLoad, safeSave } from './storage.js';
 
 export const DEFAULT_PROFILE = Object.freeze({
@@ -7,6 +7,8 @@ export const DEFAULT_PROFILE = Object.freeze({
   carbTarget: 0,
   fatTarget: 0,
 });
+
+const ZERO_MACROS = () => ({ kcal: 0, protein: 0, carbs: 0, fat: 0 });
 
 export function normalizeProfile(profile) {
   const source = profile && typeof profile === 'object' ? profile : {};
@@ -19,13 +21,22 @@ export function normalizeProfile(profile) {
   };
 }
 
+export function sumMacros(items = []) {
+  return (Array.isArray(items) ? items : []).reduce((total, macros) => {
+    total.kcal += Number(macros?.kcal) || 0;
+    total.protein += Number(macros?.protein) || 0;
+    total.carbs += Number(macros?.carbs) || 0;
+    total.fat += Number(macros?.fat) || 0;
+    return total;
+  }, ZERO_MACROS());
+}
+
 export function buildNutritionViewModel({ profile, meals } = {}) {
   const safeProfile = normalizeProfile(profile);
   const safeMeals = Array.isArray(meals) ? meals : [];
   const mealTotals = safeMeals.map((meal) => {
     const ingredients = Array.isArray(meal?.ingredients) ? meal.ingredients : [];
-    const macros = ingredients.map((item) => calculateIngredientMacros(item));
-    return { ...meal, totals: sumMacros(macros) };
+    return { ...meal, totals: calcRecipeMacros(ingredients) };
   });
   return {
     profile: safeProfile,
@@ -35,13 +46,17 @@ export function buildNutritionViewModel({ profile, meals } = {}) {
   };
 }
 
+export function previewIngredient(ingredient) {
+  return calcIngredientMacros(ingredient);
+}
+
 export function loadNutritionState(storage = globalThis.localStorage) {
   const profile = safeLoad(storage, 'evolutio.profile', DEFAULT_PROFILE);
   const meals = safeLoad(storage, 'evolutio.meals', []);
   return buildNutritionViewModel({ profile, meals });
 }
 
-export function saveNutritionState({ profile, meals }, storage = globalThis.localStorage) {
+export function saveNutritionState({ profile, meals } = {}, storage = globalThis.localStorage) {
   safeSave(storage, 'evolutio.profile', normalizeProfile(profile));
   safeSave(storage, 'evolutio.meals', Array.isArray(meals) ? meals : []);
 }
